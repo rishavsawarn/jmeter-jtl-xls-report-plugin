@@ -2,7 +2,7 @@
 
 A custom Apache JMeter plugin that generates Excel SLA reports from JTL result files.
 
-The plugin helps performance engineers quickly create clean, formatted transaction-level performance reports with SLA validation.
+The plugin helps performance engineers/Testers quickly create clean, formatted transaction-level performance reports with SLA validation.
 
 ---
 
