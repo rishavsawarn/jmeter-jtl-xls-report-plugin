@@ -1,3 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
@@ -6,24 +7,43 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.example.jmeter</groupId>
-    <artifactId>jtl-xls-plugin</artifactId>
-    <version>1.0</version>
+    <artifactId>jmeter-jtl-xls-report-plugin</artifactId>
+
+    <!--
+        VERSION BUMP INSTRUCTIONS
+        ─────────────────────────
+        When cutting a new release, update this version number following semver:
+          MAJOR.MINOR.PATCH
+            • PATCH  — bug fixes, no new features         e.g. 1.0.0 → 1.0.1
+            • MINOR  — new features, backward-compatible  e.g. 1.0.1 → 1.1.0
+            • MAJOR  — breaking changes                   e.g. 1.1.0 → 2.0.0
+
+        The JAR produced will be named:
+          jmeter-jtl-xls-report-plugin-<version>-jar-with-dependencies.jar
+        This name is referenced in the GitHub Actions workflow.
+    -->
+    <version>2.0.0</version>
+
     <packaging>jar</packaging>
 
-    <name>JMeter JTL XLS Plugin</name>
-    <description>Generate Excel report from JMeter JTL files</description>
+    <name>JMeter JTL to Excel Report Plugin</name>
+    <description>
+        Generates structured Excel SLA reports directly from JMeter JTL result
+        files. Supports both JMeter GUI listener mode and headless CLI mode for
+        use in CI/CD pipelines such as GitHub Actions.
+    </description>
 
     <properties>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.source>11</maven.compiler.source>
         <maven.compiler.target>11</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <jmeter.version>5.6.3</jmeter.version>
-        <poi.version>5.2.5</poi.version>
+        <poi.version>5.2.3</poi.version>
     </properties>
 
     <dependencies>
 
-        <!-- JMeter Core -->
+        <!-- Apache JMeter core (provided — already on classpath at runtime) -->
         <dependency>
             <groupId>org.apache.jmeter</groupId>
             <artifactId>ApacheJMeter_core</artifactId>
@@ -31,29 +51,7 @@
             <scope>provided</scope>
         </dependency>
 
-        <!-- JMeter Components -->
-        <dependency>
-            <groupId>org.apache.jmeter</groupId>
-            <artifactId>ApacheJMeter_components</artifactId>
-            <version>${jmeter.version}</version>
-            <scope>provided</scope>
-        </dependency>
-
-        <!-- JMeter Java Sampler -->
-        <dependency>
-            <groupId>org.apache.jmeter</groupId>
-            <artifactId>ApacheJMeter_java</artifactId>
-            <version>${jmeter.version}</version>
-            <scope>provided</scope>
-        </dependency>
-
-        <!-- Apache POI (Excel generation) -->
-        <dependency>
-            <groupId>org.apache.poi</groupId>
-            <artifactId>poi</artifactId>
-            <version>${poi.version}</version>
-        </dependency>
-
+        <!-- Apache POI — Excel generation (bundled into fat JAR) -->
         <dependency>
             <groupId>org.apache.poi</groupId>
             <artifactId>poi-ooxml</artifactId>
@@ -65,34 +63,50 @@
     <build>
         <plugins>
 
-            <!-- Java Compiler -->
+            <!-- 1. Standard compiler plugin -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.11.0</version>
                 <configuration>
-                    <source>${maven.compiler.source}</source>
-                    <target>${maven.compiler.target}</target>
+                    <source>11</source>
+                    <target>11</target>
                 </configuration>
             </plugin>
 
-            <!-- Create Fat JAR (includes POI dependencies) -->
+            <!--
+                2. Assembly plugin — builds a fat JAR with all dependencies
+                   bundled (except JMeter which is provided at runtime).
+
+                   Output: target/jmeter-jtl-xls-report-plugin-<version>-jar-with-dependencies.jar
+
+                   The <mainClass> entry enables:
+                     java -jar jmeter-jtl-xls-report-plugin-2.0.0-jar-with-dependencies.jar \
+                       ‑‑jtl-dir jtl-input ...
+            -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-shade-plugin</artifactId>
-                <version>3.5.1</version>
-
+                <artifactId>maven-assembly-plugin</artifactId>
+                <version>3.6.0</version>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <mainClass>com.example.jmeter.plugin.JMeterAggregateFull</mainClass>
+                        </manifest>
+                    </archive>
+                    <descriptorRefs>
+                        <descriptorRef>jar-with-dependencies</descriptorRef>
+                    </descriptorRefs>
+                    <!-- Keep fat JAR in target root, not in a subdirectory -->
+                    <appendAssemblyId>true</appendAssemblyId>
+                </configuration>
                 <executions>
                     <execution>
+                        <id>make-assembly</id>
                         <phase>package</phase>
                         <goals>
-                            <goal>shade</goal>
+                            <goal>single</goal>
                         </goals>
-
-                        <configuration>
-                            <createDependencyReducedPom>false</createDependencyReducedPom>
-                        </configuration>
-
                     </execution>
                 </executions>
             </plugin>
