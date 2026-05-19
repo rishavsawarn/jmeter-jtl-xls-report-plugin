@@ -11,26 +11,20 @@
 
     <!--
         VERSION BUMP INSTRUCTIONS
-        ─────────────────────────
-        When cutting a new release, update this version number following semver:
-          MAJOR.MINOR.PATCH
-            • PATCH  — bug fixes, no new features         e.g. 1.0.0 → 1.0.1
-            • MINOR  — new features, backward-compatible  e.g. 1.0.1 → 1.1.0
-            • MAJOR  — breaking changes                   e.g. 1.1.0 → 2.0.0
-
-        The JAR produced will be named:
-          jmeter-jtl-xls-report-plugin-<version>-jar-with-dependencies.jar
-        This name is referenced in the GitHub Actions workflow.
+        When cutting a new release, update version and finalName together:
+          <version>3.0.0</version>
+          <finalName>jmeter-jtl-xls-report-plugin-v3.0.0</finalName>
     -->
-    <version>2.0.0</version>
+    <version>3.0.0</version>
 
     <packaging>jar</packaging>
 
     <name>JMeter JTL to Excel Report Plugin</name>
     <description>
-        Generates structured Excel SLA reports directly from JMeter JTL result
-        files. Supports both JMeter GUI listener mode and headless CLI mode for
-        use in CI/CD pipelines such as GitHub Actions.
+        Generates structured Excel SLA reports from JMeter JTL result files.
+        Supports JMeter GUI listener mode and headless CLI mode for CI/CD pipelines.
+        v3.0.0 adds baseline JTL comparison with 3-sheet Excel output:
+        Current Run, Baseline, and Comparison with color-coded regression indicators.
     </description>
 
     <properties>
@@ -51,19 +45,32 @@
             <scope>provided</scope>
         </dependency>
 
-        <!-- Apache POI — Excel generation (bundled into fat JAR) -->
+        <!-- Apache POI — Excel generation (bundled into fat JAR)
+             commons-compress is excluded because JMeter already provides its own
+             version at runtime. Bundling a different version causes an
+             IncompatibleClassChangeError during JMeter class scanning on startup. -->
         <dependency>
             <groupId>org.apache.poi</groupId>
             <artifactId>poi-ooxml</artifactId>
             <version>${poi.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.apache.commons</groupId>
+                    <artifactId>commons-compress</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
     </dependencies>
 
     <build>
+
+        <!-- Output: target/jmeter-jtl-xls-report-plugin-v3.0.0.jar -->
+        <finalName>jmeter-jtl-xls-report-plugin-v3.0.0</finalName>
+
         <plugins>
 
-            <!-- 1. Standard compiler plugin -->
+            <!-- 1. Compiler -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
@@ -74,16 +81,20 @@
                 </configuration>
             </plugin>
 
-            <!--
-                2. Assembly plugin — builds a fat JAR with all dependencies
-                   bundled (except JMeter which is provided at runtime).
+            <!-- 2. Disable thin JAR — fat JAR only -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.3.0</version>
+                <executions>
+                    <execution>
+                        <id>default-jar</id>
+                        <phase>none</phase>
+                    </execution>
+                </executions>
+            </plugin>
 
-                   Output: target/jmeter-jtl-xls-report-plugin-<version>-jar-with-dependencies.jar
-
-                   The <mainClass> entry enables:
-                     java -jar jmeter-jtl-xls-report-plugin-2.0.0-jar-with-dependencies.jar \
-                       ‑‑jtl-dir jtl-input ...
-            -->
+            <!-- 3. Fat JAR — all deps bundled, no suffix -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-assembly-plugin</artifactId>
@@ -97,8 +108,7 @@
                     <descriptorRefs>
                         <descriptorRef>jar-with-dependencies</descriptorRef>
                     </descriptorRefs>
-                    <!-- Keep fat JAR in target root, not in a subdirectory -->
-                    <appendAssemblyId>true</appendAssemblyId>
+                    <appendAssemblyId>false</appendAssemblyId>
                 </configuration>
                 <executions>
                     <execution>
