@@ -135,6 +135,12 @@ src
          └── jmeter-plugin.properties
 ```
 
+##Changelog
+
+v3.0.0 — Baseline JTL comparison (Current / Baseline / Comparison sheets); GUI Baseline Directory field; remembers last-used paths between sessions
+v2.0.0 — Headless CLI mode; P95 metric column; auto-create output directory; empty prefix now includes all transactions
+v1.0.0 — Initial release: Excel SLA reports with P90 highlighting
+
 ---
 
 ## Author
