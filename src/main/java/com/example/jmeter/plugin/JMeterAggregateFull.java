@@ -51,6 +51,56 @@ public class JMeterAggregateFull {
     public static void saveLastOutputPath(String path)   { PREFS.put(PREF_OUTPUT_PATH,   path); }
 
     // =========================================================================
+    // ERROR CATEGORIES (v3.1.0) — breakdown of failures by type
+    // =========================================================================
+    static final String CAT_TIMEOUT   = "Timeout";
+    static final String CAT_4XX       = "4xx (Client)";
+    static final String CAT_5XX       = "5xx (Server)";
+    static final String CAT_ASSERTION = "Assertion";
+    static final String CAT_OTHER     = "Other";
+
+    /**
+     * Classifies a single failed sample into an error category using the JTL's
+     * responseCode / responseMessage / failureMessage fields.
+     *
+     * Order matters: timeouts are detected first (they can appear as non-numeric
+     * codes like "java.net.SocketTimeoutException"), then numeric HTTP ranges,
+     * then the assertion case (HTTP was 2xx/3xx but JMeter still marked the
+     * sample failed — i.e. an assertion failed), then everything else.
+     */
+    private String categorizeError(String responseCode,
+                                   String responseMessage,
+                                   String failureMessage) {
+        String rc = responseCode    == null ? "" : responseCode.trim();
+        String rcLower = rc.toLowerCase();
+        String rm = responseMessage == null ? "" : responseMessage.toLowerCase();
+        String fm = failureMessage  == null ? "" : failureMessage.toLowerCase();
+
+        // 1) Timeout — from code or from any message field
+        if (rcLower.contains("timeout") || rcLower.contains("timed out")
+                || rm.contains("timeout") || rm.contains("timed out")
+                || fm.contains("timeout") || fm.contains("timed out")) {
+            return CAT_TIMEOUT;
+        }
+
+        // 2) Numeric HTTP status codes
+        try {
+            int code = Integer.parseInt(rc);
+            if (code >= 400 && code < 500) return CAT_4XX;
+            if (code >= 500 && code < 600) return CAT_5XX;
+            // HTTP request itself was OK (2xx/3xx) but the sample failed
+            // => a JMeter assertion failed on the response.
+            if (code >= 200 && code < 400) return CAT_ASSERTION;
+            // code 0, 1xx, or anything else => connection / non-HTTP error
+            return CAT_OTHER;
+        } catch (NumberFormatException e) {
+            // Non-numeric response code, e.g. "Non HTTP response code:
+            // java.net.ConnectException" => connection / non-HTTP error
+            return CAT_OTHER;
+        }
+    }
+
+    // =========================================================================
     // CLI ENTRY POINT
     // =========================================================================
     public static void main(String[] args) {
@@ -111,11 +161,12 @@ public class JMeterAggregateFull {
             double slaSeconds
     ) throws Exception {
 
-        Map<String, List<Long>> responseTimes = new HashMap<>();
-        Map<String, Integer>    errorCount    = new HashMap<>();
-        TestTiming              timing        = new TestTiming();
+        Map<String, List<Long>>              responseTimes  = new HashMap<>();
+        Map<String, Integer>                 errorCount     = new HashMap<>();
+        Map<String, Map<String, Integer>>    errorBreakdown = new HashMap<>();
+        TestTiming                           timing         = new TestTiming();
 
-        loadJtl(jtlPath, responseTimes, errorCount, transactionPrefix, timing);
+        loadJtl(jtlPath, responseTimes, errorCount, errorBreakdown, transactionPrefix, timing);
 
         new File(outputDirectory).mkdirs();
         String outputPath = outputDirectory + File.separator + outputFileName + ".xlsx";
@@ -129,6 +180,9 @@ public class JMeterAggregateFull {
 
         writeResultSheet(workbook, sp, "Current Run",
                 responseTimes, errorCount, environment, url, scriptingName, slaSeconds, timing);
+
+        // v3.1.0 — Error breakdown by type
+        writeErrorAnalysisSheet(workbook, sp, errorBreakdown, errorCount, responseTimes);
 
         try (FileOutputStream fos = new FileOutputStream(outputPath)) {
             workbook.write(fos);
@@ -160,11 +214,12 @@ public class JMeterAggregateFull {
         }
         saveLastOutputPath(outputDirectory);
 
-        Map<String, List<Long>> currentTimes  = new HashMap<>();
-        Map<String, Integer>    currentErrors = new HashMap<>();
-        TestTiming              currentTiming = new TestTiming();
+        Map<String, List<Long>>              currentTimes     = new HashMap<>();
+        Map<String, Integer>                 currentErrors    = new HashMap<>();
+        Map<String, Map<String, Integer>>    currentBreakdown = new HashMap<>();
+        TestTiming                           currentTiming    = new TestTiming();
 
-        loadJtl(jtlPath, currentTimes, currentErrors, transactionPrefixes, currentTiming);
+        loadJtl(jtlPath, currentTimes, currentErrors, currentBreakdown, transactionPrefixes, currentTiming);
 
         new File(outputDirectory).mkdirs();
         String outputPath = outputDirectory + File.separator + outputFileName + ".xlsx";
@@ -176,14 +231,18 @@ public class JMeterAggregateFull {
         writeResultSheet(workbook, sp, "Current Run",
                 currentTimes, currentErrors, environment, url, scriptingName, slaSeconds, currentTiming);
 
+        // v3.1.0 — Error breakdown by type (for the current run)
+        writeErrorAnalysisSheet(workbook, sp, currentBreakdown, currentErrors, currentTimes);
+
         boolean hasBaseline = baselineJtlPath != null && !baselineJtlPath.trim().isEmpty();
 
         if (hasBaseline) {
-            Map<String, List<Long>> baselineTimes  = new HashMap<>();
-            Map<String, Integer>    baselineErrors = new HashMap<>();
-            TestTiming              baselineTiming = new TestTiming();
+            Map<String, List<Long>>              baselineTimes     = new HashMap<>();
+            Map<String, Integer>                 baselineErrors    = new HashMap<>();
+            Map<String, Map<String, Integer>>    baselineBreakdown = new HashMap<>();
+            TestTiming                           baselineTiming    = new TestTiming();
 
-            loadJtl(baselineJtlPath, baselineTimes, baselineErrors, transactionPrefixes, baselineTiming);
+            loadJtl(baselineJtlPath, baselineTimes, baselineErrors, baselineBreakdown, transactionPrefixes, baselineTiming);
 
             // Sheet 2 — Baseline (timing from baseline JTL timestamps)
             writeResultSheet(workbook, sp, "Baseline",
@@ -218,6 +277,7 @@ public class JMeterAggregateFull {
             String path,
             Map<String, List<Long>> responseTimes,
             Map<String, Integer> errorCount,
+            Map<String, Map<String, Integer>> errorBreakdown,  // v3.1.0 — per-txn error types
             String prefixes,
             TestTiming timing         // collects min/max timestamps from JTL
     ) throws Exception {
@@ -242,7 +302,7 @@ public class JMeterAggregateFull {
 
         for (File jtl : jtlFiles) {
             System.out.println("Parsing: " + jtl.getName());
-            parseJTL(jtl, responseTimes, errorCount, prefixes, timing);
+            parseJTL(jtl, responseTimes, errorCount, errorBreakdown, prefixes, timing);
         }
 
         if (responseTimes.isEmpty()) {
@@ -266,6 +326,7 @@ public class JMeterAggregateFull {
             File jtlFile,
             Map<String, List<Long>> responseTimes,
             Map<String, Integer> errorCount,
+            Map<String, Map<String, Integer>> errorBreakdown,  // v3.1.0
             String prefixes,
             TestTiming timing
     ) throws Exception {
@@ -321,6 +382,19 @@ public class JMeterAggregateFull {
 
                 if (!success) {
                     errorCount.put(label, errorCount.getOrDefault(label, 0) + 1);
+
+                    // v3.1.0 — classify the failure by type.
+                    // Standard JMeter CSV column order:
+                    //   3 = responseCode, 4 = responseMessage, 8 = failureMessage
+                    String responseCode    = cols.length > 3 ? cols[3].trim() : "";
+                    String responseMessage = cols.length > 4 ? cols[4].trim() : "";
+                    String failureMessage  = cols.length > 8 ? cols[8].trim() : "";
+
+                    String category = categorizeError(responseCode, responseMessage, failureMessage);
+
+                    errorBreakdown.putIfAbsent(label, new LinkedHashMap<>());
+                    Map<String, Integer> catMap = errorBreakdown.get(label);
+                    catMap.put(category, catMap.getOrDefault(category, 0) + 1);
                 }
             }
 
@@ -563,6 +637,109 @@ public class JMeterAggregateFull {
 
         for (int i = 0; i < colHeaders.length; i++) sheet.autoSizeColumn(i);
         sheet.createFreezePane(0, 5);
+    }
+
+    // =========================================================================
+    // WRITE ERROR ANALYSIS SHEET (v3.1.0)
+    // Per-transaction breakdown of failures: Timeout / 4xx / 5xx / Assertion / Other
+    // =========================================================================
+    private void writeErrorAnalysisSheet(
+            Workbook workbook,
+            StylePack sp,
+            Map<String, Map<String, Integer>> errorBreakdown,
+            Map<String, Integer> errorCount,
+            Map<String, List<Long>> responseTimes
+    ) {
+        Sheet sheet = workbook.createSheet("Error Analysis");
+        int rowNum = 0;
+
+        // Title
+        Row  title     = sheet.createRow(rowNum++);
+        Cell titleCell = title.createCell(0);
+        titleCell.setCellValue("Error Breakdown by Type");
+        titleCell.setCellStyle(sp.titleStyle);
+
+        // Legend
+        Row legend = sheet.createRow(rowNum++);
+        legend.createCell(0).setCellValue(
+            "Timeout = socket/read timeouts  |  4xx = client errors  |  5xx = server errors  |  "
+          + "Assertion = HTTP OK but a JMeter assertion failed  |  Other = connection / non-HTTP errors"
+        );
+
+        rowNum++; // blank row
+
+        // Headers
+        String[] headers = { "Transaction", "Total Errors",
+                             CAT_TIMEOUT, CAT_4XX, CAT_5XX, CAT_ASSERTION, CAT_OTHER, "Error %" };
+        Row headerRow = sheet.createRow(rowNum++);
+        for (int i = 0; i < headers.length; i++) {
+            Cell c = headerRow.createCell(i);
+            c.setCellValue(headers[i]);
+            c.setCellStyle(sp.headerStyle);
+        }
+
+        // Only list transactions that actually recorded at least one error
+        List<String> failing = new ArrayList<>();
+        for (String txn : sortedStrings(responseTimes.keySet())) {
+            if (errorCount.getOrDefault(txn, 0) > 0) failing.add(txn);
+        }
+
+        // Clean-run shortcut
+        if (failing.isEmpty()) {
+            Row none = sheet.createRow(rowNum++);
+            Cell c = none.createCell(0);
+            c.setCellValue("No errors recorded across all transactions.");
+            c.setCellStyle(sp.greenStyle);
+            for (int i = 0; i < headers.length; i++) sheet.autoSizeColumn(i);
+            return;
+        }
+
+        // Running totals for the TOTAL row
+        int tTotal = 0, tTimeout = 0, t4 = 0, t5 = 0, tAssert = 0, tOther = 0;
+
+        for (String txn : failing) {
+            Map<String, Integer> cats = errorBreakdown.getOrDefault(txn, Collections.emptyMap());
+            int timeout = cats.getOrDefault(CAT_TIMEOUT,   0);
+            int c4      = cats.getOrDefault(CAT_4XX,       0);
+            int c5      = cats.getOrDefault(CAT_5XX,       0);
+            int cAssert = cats.getOrDefault(CAT_ASSERTION, 0);
+            int cOther  = cats.getOrDefault(CAT_OTHER,     0);
+            int total   = errorCount.getOrDefault(txn, 0);
+            int samples = responseTimes.get(txn).size();
+            double errPct = samples == 0 ? 0 : (double) total / samples * 100;
+
+            Row row = sheet.createRow(rowNum++);
+            setCellStr(row, 0, txn,   sp.centerStyle);
+            setCellInt(row, 1, total, sp.centerStyle);
+            setCellInt(row, 2, timeout, timeout > 0 ? sp.redStyle    : sp.centerStyle);
+            setCellInt(row, 3, c4,      c4      > 0 ? sp.redStyle    : sp.centerStyle);
+            setCellInt(row, 4, c5,      c5      > 0 ? sp.redStyle    : sp.centerStyle);
+            setCellInt(row, 5, cAssert, cAssert > 0 ? sp.yellowStyle : sp.centerStyle);
+            setCellInt(row, 6, cOther,  cOther  > 0 ? sp.redStyle    : sp.centerStyle);
+            setCellStr(row, 7, String.format("%.2f%%", errPct), sp.centerStyle);
+
+            tTotal += total; tTimeout += timeout; t4 += c4; t5 += c5;
+            tAssert += cAssert; tOther += cOther;
+        }
+
+        // Overall error % uses ALL samples across every transaction (not just failing ones)
+        int totalSamplesAll = 0;
+        for (List<Long> v : responseTimes.values()) totalSamplesAll += v.size();
+        double overallPct = totalSamplesAll == 0 ? 0 : (double) tTotal / totalSamplesAll * 100;
+
+        // TOTAL row
+        Row totalRow = sheet.createRow(rowNum++);
+        setCellStr(totalRow, 0, "TOTAL",   sp.headerStyle);
+        setCellInt(totalRow, 1, tTotal,    sp.headerStyle);
+        setCellInt(totalRow, 2, tTimeout,  sp.headerStyle);
+        setCellInt(totalRow, 3, t4,        sp.headerStyle);
+        setCellInt(totalRow, 4, t5,        sp.headerStyle);
+        setCellInt(totalRow, 5, tAssert,   sp.headerStyle);
+        setCellInt(totalRow, 6, tOther,    sp.headerStyle);
+        setCellStr(totalRow, 7, String.format("%.2f%%", overallPct), sp.headerStyle);
+
+        for (int i = 0; i < headers.length; i++) sheet.autoSizeColumn(i);
+        sheet.createFreezePane(0, 4);
     }
 
     // =========================================================================
