@@ -1,10 +1,13 @@
 {
   "id": "jtl-xls-smart-report",
   "name": "JTL Excel Smart Report Generator",
-  "description": "Generate Excel SLA reports from JTL result files with transaction-wise metrics and P90 SLA validation.",
+  "description": "Generate Excel SLA reports from JTL result files with transaction-wise metrics, P90 SLA validation, baseline comparison, and per-transaction error breakdown by type.",
   "vendor": "Rishav",
   "helpUrl": "https://github.com/rishavsawarn/jmeter-jtl-xls-report-plugin",
   "markerClass": "com.example.jmeter.plugin.JtlToXlsListener",
+  "componentClasses": [
+    "com.example.jmeter.plugin.JtlToXlsGui"
+  ],
   "screenshotUrl": "https://raw.githubusercontent.com/rishavsawarn/jmeter-jtl-xls-report-plugin/main/docs/Screenshot1.jpeg",
   "versions": {
     "1.0.0": {
@@ -13,6 +16,14 @@
     "2.0.0": {
       "changes": "Added headless CLI mode for CI/CD pipelines and GitHub Actions. Added P95 metric column. Auto-creates output directory if missing. Empty prefix now includes all transactions.",
       "downloadUrl": "https://github.com/rishavsawarn/jmeter-jtl-xls-report-plugin/releases/download/v2.0.0/jmeter-jtl-xls-report-plugin-2.0.0-jar-with-dependencies.jar"
+    },
+    "3.0.0": {
+      "changes": "Added baseline JTL comparison with 3-sheet Excel output (Current Run, Baseline, Comparison) and color-coded regression indicators. Test start time now read from JTL timestamps.",
+      "downloadUrl": "https://github.com/rishavsawarn/jmeter-jtl-xls-report-plugin/releases/download/v3.0.0/jmeter-jtl-xls-report-plugin-v3.0.0.jar"
+    },
+    "3.1.0": {
+      "changes": "Added Error Analysis sheet: per-transaction breakdown of failures by type (Timeout, 4xx, 5xx, Assertion, Other) derived from the JTL responseCode/responseMessage/failureMessage fields, with a totals row and color highlighting. Fixed a runtime NoClassDefFoundError by bundling commons-compress (harmony/pack200 classes stripped to avoid JMeter's startup class-scanner crash).",
+      "downloadUrl": "https://github.com/rishavsawarn/jmeter-jtl-xls-report-plugin/releases/download/v3.1.0/jmeter-jtl-xls-report-plugin-v3.1.0.jar"
     }
   }
 }
