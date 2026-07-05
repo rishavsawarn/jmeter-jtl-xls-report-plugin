@@ -12,10 +12,10 @@
     <!--
         VERSION BUMP INSTRUCTIONS
         When cutting a new release, update version and finalName together:
-          <version>3.0.0</version>
-          <finalName>jmeter-jtl-xls-report-plugin-v3.0.0</finalName>
+          <version>3.1.0</version>
+          <finalName>jmeter-jtl-xls-report-plugin-v3.1.0</finalName>
     -->
-    <version>3.0.0</version>
+    <version>3.1.0</version>
 
     <packaging>jar</packaging>
 
@@ -25,6 +25,9 @@
         Supports JMeter GUI listener mode and headless CLI mode for CI/CD pipelines.
         v3.0.0 adds baseline JTL comparison with 3-sheet Excel output:
         Current Run, Baseline, and Comparison with color-coded regression indicators.
+        v3.1.0 adds an Error Analysis sheet: per-transaction breakdown of failures
+        by type (Timeout, 4xx, 5xx, Assertion, Other) derived from the JTL
+        responseCode / responseMessage / failureMessage fields.
     </description>
 
     <properties>
@@ -45,28 +48,31 @@
             <scope>provided</scope>
         </dependency>
 
-        <!-- Apache POI — Excel generation (bundled into fat JAR)
-             commons-compress is excluded because JMeter already provides its own
-             version at runtime. Bundling a different version causes an
-             IncompatibleClassChangeError during JMeter class scanning on startup. -->
+        <!-- Apache POI — Excel generation (bundled into fat JAR).
+
+             NOTE (v3.1.0): commons-compress is NO LONGER excluded here. POI needs
+             it at runtime (org.apache.commons.compress.archivers.zip.ZipFile) to
+             write .xlsx files, and JMeter does not provide it on the plugin
+             classloader — excluding it caused a NoClassDefFoundError at report time.
+
+             It is instead bundled via the shade plugin below, with the
+             harmony/pack200 classes filtered out. Those classes were compiled
+             against an older ASM (ClassVisitor as an interface) and crash JMeter's
+             startup class scanner (IncompatibleClassChangeError, since JMeter 5.6.3
+             ships ASM 9.6 where ClassVisitor is a class). POI never uses pack200,
+             so stripping them is safe. -->
         <dependency>
             <groupId>org.apache.poi</groupId>
             <artifactId>poi-ooxml</artifactId>
             <version>${poi.version}</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>org.apache.commons</groupId>
-                    <artifactId>commons-compress</artifactId>
-                </exclusion>
-            </exclusions>
         </dependency>
 
     </dependencies>
 
     <build>
 
-        <!-- Output: target/jmeter-jtl-xls-report-plugin-v3.0.0.jar -->
-        <finalName>jmeter-jtl-xls-report-plugin-v3.0.0</finalName>
+        <!-- Output: target/jmeter-jtl-xls-report-plugin-v3.1.0.jar -->
+        <finalName>jmeter-jtl-xls-report-plugin-v3.1.0</finalName>
 
         <plugins>
 
@@ -81,42 +87,57 @@
                 </configuration>
             </plugin>
 
-            <!-- 2. Disable thin JAR — fat JAR only -->
+            <!-- 2. Fat JAR via shade — bundles all runtime deps, filters the
+                    commons-compress classes that break JMeter's class scanner. -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-jar-plugin</artifactId>
-                <version>3.3.0</version>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.5.1</version>
                 <executions>
                     <execution>
-                        <id>default-jar</id>
-                        <phase>none</phase>
-                    </execution>
-                </executions>
-            </plugin>
-
-            <!-- 3. Fat JAR — all deps bundled, no suffix -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-assembly-plugin</artifactId>
-                <version>3.6.0</version>
-                <configuration>
-                    <archive>
-                        <manifest>
-                            <mainClass>com.example.jmeter.plugin.JMeterAggregateFull</mainClass>
-                        </manifest>
-                    </archive>
-                    <descriptorRefs>
-                        <descriptorRef>jar-with-dependencies</descriptorRef>
-                    </descriptorRefs>
-                    <appendAssemblyId>false</appendAssemblyId>
-                </configuration>
-                <executions>
-                    <execution>
-                        <id>make-assembly</id>
                         <phase>package</phase>
                         <goals>
-                            <goal>single</goal>
+                            <goal>shade</goal>
                         </goals>
+                        <configuration>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+
+                            <transformers>
+                                <!-- Main-Class for headless CLI mode (java -jar ...) -->
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <manifestEntries>
+                                        <Main-Class>com.example.jmeter.plugin.JMeterAggregateFull</Main-Class>
+                                    </manifestEntries>
+                                </transformer>
+                                <!-- Merge META-INF/services (keeps the JMeter GUI
+                                     component service file + POI's service files) -->
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                            </transformers>
+
+                            <filters>
+                                <!-- Drop signatures / module descriptors from bundled jars -->
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                        <exclude>module-info.class</exclude>
+                                    </excludes>
+                                </filter>
+
+                                <!-- The actual fix: bundle commons-compress but remove the
+                                     pack200/harmony classes that crash JMeter's startup
+                                     scanner. POI only needs archivers/zip + compressors. -->
+                                <filter>
+                                    <artifact>org.apache.commons:commons-compress</artifact>
+                                    <excludes>
+                                        <exclude>org/apache/commons/compress/harmony/**</exclude>
+                                        <exclude>org/apache/commons/compress/compressors/pack200/**</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>
